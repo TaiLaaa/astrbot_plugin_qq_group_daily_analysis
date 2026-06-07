@@ -763,6 +763,10 @@ class ReportGenerator(IReportGenerator):
             profile_info = self._resolve_profile_info(
                 title.mbti, profile_mode, profile_mapping_overrides
             )
+            if profile_info.get("profile_image"):
+                profile_info["profile_image"] = await self._inline_report_image(
+                    str(profile_info.get("profile_image") or "")
+                )
             title_data = {
                 "name": title.name,
                 "title": title.title,
@@ -825,41 +829,53 @@ class ReportGenerator(IReportGenerator):
         )
         logger.info(f"金句HTML生成完成，长度: {len(quotes_html)}")
 
-        # 生成图片锐评HTML：独立于金句区块，避免和最后一条文字锐评粘连
-        image_summary_html = ""
+        # 生成图片锐评HTML
+        max_image_summaries = getattr(
+            self.config_manager, "get_max_image_summaries", lambda: 5
+        )()
         image_summaries = analysis_result.get("image_summaries") or []
-        max_image_summaries = min(
-            self.config_manager.get_max_golden_quotes(),
-            getattr(self.config_manager, "get_max_image_summaries", lambda: 5)(),
-        )
         display_image_summaries = image_summaries[:max_image_summaries]
-        if display_image_summaries:
-            image_cards = []
-            for item in display_image_summaries:
-                if isinstance(item, dict):
-                    url = item.get("url", "")
-                    sender = item.get("sender", "")
-                    raw_roast = item.get("model_summary") or item.get("description") or "这张图已收录进今日群聊名场面。"
-                else:
-                    url = getattr(item, "url", "")
-                    sender = getattr(item, "sender", "")
-                    raw_roast = getattr(item, "model_summary", "") or getattr(item, "description", "") or "这张图已收录进今日群聊名场面。"
-                image_cards.append(
-                    '<div class="quote-wrapper" style="margin-bottom: 28px; break-inside: avoid; clear: both;">'
-                    '<div class="q-bubble" style="padding: 0; overflow: hidden;">'
-                    f'<img src="{self._escape_html(url)}" alt="图片锐评" style="width: 100%; max-height: 360px; object-fit: contain; display: block; background: #f7f1e3; border-bottom: 2px solid var(--ink-primary);">'
-                    '<div style="padding: 18px 20px;">'
-                    f'<div class="q-author" style="margin-bottom: 10px;">🖼️ 图片锐评：{self._escape_html(sender)}</div>'
-                    f'<div class="q-analysis-note">{self._escape_html(str(raw_roast))}</div>'
-                    '</div></div></div>'
+
+        image_summaries_list = []
+        for item in display_image_summaries:
+            user_id = getattr(item, "sender_id", None)
+            avatar_url = (
+                await self._get_user_avatar(
+                    user_id,
+                    avatar_url_getter,
+                    avatar_cache_namespace,
                 )
-            image_summary_html = (
-                '<div class="quotes-section image-moments-section" style="grid-column: span 12; clear: both; display: block; margin-top: 56px; padding-top: 26px; border-top: 2px dashed rgba(0,0,0,0.18);">'
-                '<h2 class="section-title">🖼️ 图片名场面</h2>'
-                + ''.join(image_cards)
-                + '</div>'
+                if user_id
+                else None
             )
-            logger.info(f"图片锐评HTML生成完成，图片数: {len(display_image_summaries)}/{len(image_summaries)}")
+            if user_id:
+                self._register_reusable_avatar(
+                    avatar_url,
+                    avatar_reuse_registry,
+                    avatar_reuse_aliases,
+                    avatar_key=self._get_avatar_cache_key(
+                        user_id, avatar_cache_namespace
+                    ),
+                )
+            image_summaries_list.append(
+                {
+                    "url": await self._inline_report_image(getattr(item, "url", "")),
+                    "sender": item.sender,
+                    "sender_id": user_id,
+                    "avatar_url": avatar_url,
+                    "description": item.model_summary or item.description,
+                }
+            )
+
+        image_summary_html = self.html_templates.render_template(
+            "image_summary_item.html",
+            image_summaries=image_summaries_list,
+            **common_context,
+        )
+        if image_summary_html:
+            logger.info(
+                f"图片锐评HTML生成完成，图片数: {len(display_image_summaries)}/{len(image_summaries)}"
+            )
 
         # 生成活跃度可视化HTML
         chart_data = self.activity_visualizer.get_hourly_chart_data(
@@ -1319,6 +1335,66 @@ class ReportGenerator(IReportGenerator):
                 logger.warning(f"下载头像网络错误 {safe_avatar_url}: {e}")
 
             return file_content
+
+    async def _inline_report_image(self, image_url: str) -> str:
+        """把报告正文里的远程/本地图片转成 data URI，避免 Playwright set_content 等待远程图片 load 超时。"""
+        image_url = str(image_url or "").strip()
+        if not image_url:
+            return ""
+        if image_url.startswith("data:image/"):
+            return image_url
+        try:
+            raw = await self._get_image_bytes_for_report(image_url)
+            if raw:
+                data_uri = self._b64_with_mime(raw)
+                if data_uri:
+                    return data_uri
+        except Exception as e:
+            logger.warning(f"内联报告图片失败 {self._safe_url_for_log(image_url)}: {e}")
+        return image_url
+
+    async def _get_image_bytes_for_report(self, image_url: str) -> bytes | None:
+        """获取报告图片字节，支持 base64/data/file/local/http。"""
+        if image_url.startswith("base64://"):
+            return base64.b64decode(image_url[len("base64://") :])
+        if image_url.startswith("data:"):
+            parts = image_url.split(",", 1)
+            if len(parts) == 2:
+                return base64.b64decode(parts[1])
+            return None
+        if image_url.startswith("file://"):
+            path = image_url[len("file://") :]
+            return await asyncio.to_thread(Path(path).read_bytes)
+        if os.path.isfile(image_url):
+            return await asyncio.to_thread(Path(image_url).read_bytes)
+        if image_url.startswith(("http://", "https://")):
+            if not self._avatar_session:
+                self._avatar_session = aiohttp.ClientSession(
+                    trust_env=True, timeout=aiohttp.ClientTimeout(total=20)
+                )
+            async with self._avatar_session_concurrent_semaphore:
+                safe_url = self._safe_url_for_log(image_url)
+                async with self._avatar_session.get(image_url) as response:
+                    if response.status != 200:
+                        logger.warning(f"下载报告图片失败 {safe_url}: {response.status}")
+                        return None
+                    content = await response.read()
+                    if not content:
+                        return None
+                    if self._looks_like_image(content):
+                        return content
+                    logger.warning(f"下载的报告图片格式无效 ({safe_url})")
+                    return None
+        return None
+
+    @staticmethod
+    def _looks_like_image(content: bytes) -> bool:
+        return (
+            content.startswith(b"\xff\xd8")
+            or content.startswith(b"\x89PNG\r\n\x1a\n")
+            or content.startswith(b"GIF8")
+            or (content.startswith(b"RIFF") and b"WEBP" in content[:16])
+        )
 
     def _get_default_avatar_base64(self) -> str:
         """返回默认头像 (灰色圆形占位符)"""

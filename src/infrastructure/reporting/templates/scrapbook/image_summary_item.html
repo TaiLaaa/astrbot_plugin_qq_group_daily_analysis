@@ -1,0 +1,64 @@
+{% if image_summaries %}
+<style>
+.image-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 24px;
+    margin-top: 22px;
+}
+.image-summary-card {
+    background: rgba(255,255,255,0.78);
+    border: 2px solid rgba(90,70,50,0.16);
+    border-radius: 20px;
+    padding: 18px;
+    box-shadow: 0 12px 28px rgba(80,60,40,0.12);
+    overflow: hidden;
+}
+.image-summary-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    font-weight: 700;
+    color: #5a4636;
+    font-size: 16px;
+}
+.image-summary-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: #f1e7d8;
+}
+.image-summary-pic {
+    width: 100%;
+    max-height: 380px;
+    object-fit: contain;
+    background: rgba(241,231,216,0.45);
+    border-radius: 14px;
+    display: block;
+    margin-bottom: 12px;
+}
+.image-summary-desc {
+    font-size: 15px;
+    line-height: 1.65;
+    color: #6b5847;
+    word-break: break-word;
+}
+</style>
+<section class="image-summary-section">
+    <h2 class="section-title">🖼️ 图片锐评</h2>
+    <div class="image-summary-grid">
+        {% for item in image_summaries %}
+        <div class="image-summary-card">
+            <div class="image-summary-header">
+                {% if item.avatar_url %}<img class="image-summary-avatar" src="{{ item.avatar_url }}" alt="avatar">{% endif %}
+                <span>{{ item.sender or item.sender_id or '群友' }}</span>
+            </div>
+            {% if item.url %}<img class="image-summary-pic" src="{{ item.url }}" alt="image summary">{% endif %}
+            {% if item.description %}<div class="image-summary-desc">{{ item.description }}</div>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
