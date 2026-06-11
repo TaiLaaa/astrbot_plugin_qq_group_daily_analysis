@@ -763,10 +763,6 @@ class ReportGenerator(IReportGenerator):
             profile_info = self._resolve_profile_info(
                 title.mbti, profile_mode, profile_mapping_overrides
             )
-            if profile_info.get("profile_image"):
-                profile_info["profile_image"] = await self._inline_report_image(
-                    str(profile_info.get("profile_image") or "")
-                )
             title_data = {
                 "name": title.name,
                 "title": title.title,
@@ -859,7 +855,7 @@ class ReportGenerator(IReportGenerator):
                 )
             image_summaries_list.append(
                 {
-                    "url": await self._inline_report_image(getattr(item, "url", "")),
+                    "url": item.url,
                     "sender": item.sender,
                     "sender_id": user_id,
                     "avatar_url": avatar_url,
@@ -1335,66 +1331,6 @@ class ReportGenerator(IReportGenerator):
                 logger.warning(f"下载头像网络错误 {safe_avatar_url}: {e}")
 
             return file_content
-
-    async def _inline_report_image(self, image_url: str) -> str:
-        """把报告正文里的远程/本地图片转成 data URI，避免 Playwright set_content 等待远程图片 load 超时。"""
-        image_url = str(image_url or "").strip()
-        if not image_url:
-            return ""
-        if image_url.startswith("data:image/"):
-            return image_url
-        try:
-            raw = await self._get_image_bytes_for_report(image_url)
-            if raw:
-                data_uri = self._b64_with_mime(raw)
-                if data_uri:
-                    return data_uri
-        except Exception as e:
-            logger.warning(f"内联报告图片失败 {self._safe_url_for_log(image_url)}: {e}")
-        return image_url
-
-    async def _get_image_bytes_for_report(self, image_url: str) -> bytes | None:
-        """获取报告图片字节，支持 base64/data/file/local/http。"""
-        if image_url.startswith("base64://"):
-            return base64.b64decode(image_url[len("base64://") :])
-        if image_url.startswith("data:"):
-            parts = image_url.split(",", 1)
-            if len(parts) == 2:
-                return base64.b64decode(parts[1])
-            return None
-        if image_url.startswith("file://"):
-            path = image_url[len("file://") :]
-            return await asyncio.to_thread(Path(path).read_bytes)
-        if os.path.isfile(image_url):
-            return await asyncio.to_thread(Path(image_url).read_bytes)
-        if image_url.startswith(("http://", "https://")):
-            if not self._avatar_session:
-                self._avatar_session = aiohttp.ClientSession(
-                    trust_env=True, timeout=aiohttp.ClientTimeout(total=20)
-                )
-            async with self._avatar_session_concurrent_semaphore:
-                safe_url = self._safe_url_for_log(image_url)
-                async with self._avatar_session.get(image_url) as response:
-                    if response.status != 200:
-                        logger.warning(f"下载报告图片失败 {safe_url}: {response.status}")
-                        return None
-                    content = await response.read()
-                    if not content:
-                        return None
-                    if self._looks_like_image(content):
-                        return content
-                    logger.warning(f"下载的报告图片格式无效 ({safe_url})")
-                    return None
-        return None
-
-    @staticmethod
-    def _looks_like_image(content: bytes) -> bool:
-        return (
-            content.startswith(b"\xff\xd8")
-            or content.startswith(b"\x89PNG\r\n\x1a\n")
-            or content.startswith(b"GIF8")
-            or (content.startswith(b"RIFF") and b"WEBP" in content[:16])
-        )
 
     def _get_default_avatar_base64(self) -> str:
         """返回默认头像 (灰色圆形占位符)"""

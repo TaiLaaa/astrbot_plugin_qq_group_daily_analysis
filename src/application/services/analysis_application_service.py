@@ -368,9 +368,9 @@ class AnalysisApplicationService:
             ), TokenUsage()
 
         system_prompt = (
-            "你是群聊图片锐评助手。所有候选图都要保留，不要因为普通、通知、截图、表情包而跳过。"
-            "你的任务是为每张群聊图片写一句适合日报展示的简体中文短评。"
-            "只返回短评正文，不要输出 Markdown，不要输出 SKIP。"
+            "你是群聊图片筛选和锐评助手。只挑选群聊里抽象、离谱、有梗、值得锐评的图片。"
+            "宣传海报、广告图、通知截图、普通风景/壁纸/美图、表情包堆图、无明显槽点的图片一律返回 SKIP。"
+            "适合保留时，只返回适合直接展示在群日报里的简体中文短评，不要输出 Markdown。"
         )
         prompt_template = self.config_manager.get_image_summary_prompt()
 
@@ -418,12 +418,13 @@ class AnalysisApplicationService:
 
                     text = (getattr(resp, "completion_text", "") or "").strip()
                     normalized = text.strip().lower().strip("`*_ -。.!！")
-                    if not text:
-                        logger.debug("图片锐评返回为空，跳过")
+                    if (
+                        not text
+                        or normalized.startswith("skip")
+                        or normalized in {"跳过", "不保留", "忽略"}
+                    ):
+                        logger.debug("图片锐评筛选跳过普通图片 (AI 判定为不值得锐评)")
                         return None
-
-                    if normalized.startswith("skip") or normalized in {"跳过", "不保留", "忽略"}:
-                        text = getattr(item, "description", "") or "这张图成功混进日报，建议群友自行品鉴。"
 
                     item.model_summary = text[:160]
                     item.description = text[:160]
