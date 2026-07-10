@@ -147,7 +147,10 @@
             "t2i_r1_type": {
                 "type": "string",
                 "description": "第一轮：图片格式",
-                "options": ["jpeg", "png"],
+                "options": [
+                    "jpeg",
+                    "png"
+                ],
                 "default": "png",
                 "hint": "建议：PNG 格式无损但体积较大；JPEG 格式体积较小。"
             },
@@ -165,7 +168,11 @@
             "t2i_r1_device_scale": {
                 "type": "string",
                 "description": "第一轮：分辨率等级",
-                "options": ["normal", "high", "ultra"],
+                "options": [
+                    "normal",
+                    "high",
+                    "ultra"
+                ],
                 "default": "ultra",
                 "hint": "影响图片清晰度。normal=1.0x, high=1.3x, ultra=1.8x。高质量日报建议 ultra。"
             },
@@ -183,7 +190,10 @@
             "t2i_r2_type": {
                 "type": "string",
                 "description": "第二轮 (回退)：图片格式",
-                "options": ["jpeg", "png"],
+                "options": [
+                    "jpeg",
+                    "png"
+                ],
                 "default": "jpeg",
                 "hint": "回退策略建议使用 jpeg 以减少渲染压力。"
             },
@@ -201,7 +211,11 @@
             "t2i_r2_device_scale": {
                 "type": "string",
                 "description": "第二轮 (回退)：分辨率等级",
-                "options": ["normal", "high", "ultra"],
+                "options": [
+                    "normal",
+                    "high",
+                    "ultra"
+                ],
                 "default": "high",
                 "hint": "回退建议使用 high/normal 以降低复杂页面的内存消耗和超时概率。"
             },
@@ -219,7 +233,10 @@
             "t2i_font_source": {
                 "type": "string",
                 "description": "t2i 渲染环境切换",
-                "options": ["Mainland", "Overseas"],
+                "options": [
+                    "Mainland",
+                    "Overseas"
+                ],
                 "default": "Overseas",
                 "hint": "字体和静态资源的访问环境，内地（Mainland）、海外（Overseas），切换环境会自动应用下方对应的镜像站地址、语言标识(简体中文/繁体中文)及字体优先级。（实测 Overseas 也可以正常渲染简体中文）"
             },
@@ -343,6 +360,13 @@
                 "description": "启用流式 LLM 调用",
                 "default": false,
                 "hint": "默认关闭，使用原有非流式调用方式。开启后，插件将使用 AstrBot Provider 的流式接口并聚合结果，适用于仅支持 stream=true 的服务。"
+            },
+            "image_summary_provider_id": {
+                "type": "string",
+                "description": "图片锐评专用 Provider ID",
+                "_special": "select_provider",
+                "default": "",
+                "hint": "专门用于群日报【图片锐评】的多模态/视觉 Provider。留空则回退到主 LLM Provider；建议选择支持图片输入的模型。"
             }
         }
     },
@@ -411,6 +435,24 @@
                 "_special": "select_persona",
                 "default": "",
                 "hint": "当“强制使用插件指定人格”开启时，在此处选择系统中已定义的人设。若此处未选择，则仍会尝试识别全局默认人格。"
+            },
+            "image_summary_enabled": {
+                "type": "bool",
+                "description": "启用图片锐评",
+                "default": false,
+                "hint": "开启后，群分析会从群聊图片中筛选抽象、有梗、有槽点的图片，调用视觉模型生成短评并展示在报告中。"
+            },
+            "max_image_summaries": {
+                "type": "int",
+                "description": "最大图片锐评数量",
+                "default": 5,
+                "hint": "报告中最多展示多少条图片锐评。"
+            },
+            "max_image_candidates": {
+                "type": "int",
+                "description": "图片锐评候选图片上限",
+                "default": 15,
+                "hint": "每次分析最多送入视觉模型筛选的候选图片数量。数值越大，成本和耗时越高。"
             }
         }
     },
@@ -641,6 +683,20 @@
                         "default": "你现在有一份今天全天分散时间段的多个“增量批次点评笔记”。\n你的任务是将这些分散的笔记汇总成一份最终的“全天聊天质量终极锐评”。\n\n## 任务目标：\n1. **全局抽象维度**：根据各批次的维度表现，平衡权重，提取出 3-6 个覆盖全天的【核心、上层抽象】课题维度（如：职场/行业风向、技术架构演进、社畜心理博弈等）。\n2. **严禁在维度名称（name）中出现具体的批次细节。标题必须代表全天的某种趋势。**\n3. **百分比融合**：根据全天笔记的频率和强度，给出一个代表全天整体分布的比例（总和不超过100%）。\n4. **终极点评**：为每个汇总维度写出一句符合你当前人设且升华后的全天总结性点评。可以融合具体批次中的有趣槽点。\n5. **终极总结**：拟定全天的大型主题标题、副标题，并给出一句霸气的全天表现总结。\n\n## 风格要求：\n- 只有维度名称（name）需要高度概括抽象。\n- 点评（comment）和总结（summary）请尽量生动、具体，要把一整天的梗串联起来。\n\n## 返回格式要求：\n必须以纯 JSON 格式返回，不得包含任何 Markdown 格式。\n\n```json\n{{\n  \"title\": \"今日群聊主题\",\n  \"subtitle\": \"副标题\",\n  \"dimensions\": [\n    {{\n      \"name\": \"抽象大类标题\",\n      \"percentage\": 比例,\n      \"comment\": \"全天的锐评总结，请务必保持你的人设口吻\"\n    }}\n  ],\n  \"summary\": \"全天总结金句\"\n}}\n```\n\n增量汇总数据：\n${reviews_text}"
                     }
                 }
+            },
+            "image_summary_prompts": {
+                "description": "图片锐评提示词模板",
+                "type": "object",
+                "hint": "图片锐评提示词模板，可自定义修改，保留变量 ${sender}。模型返回 SKIP 表示跳过该图片。",
+                "items": {
+                    "image_summary_prompt": {
+                        "description": "默认图片锐评提示词",
+                        "type": "text",
+                        "editor_mode": true,
+                        "editor_language": "markdown",
+                        "default": "这是一张群聊图片，发送者：${sender}。请判断它是否适合放进群日报的【图片锐评】栏目。\n\n## 保留标准\n只保留真正抽象、离谱、有梗、有强烈反差感的图片。\n\n## 必须 SKIP 的类型\n宣传海报、广告图、通知截图、普通风景/壁纸/美图、自拍摆拍、商品图、无明显槽点的二次元/CG 图、单纯分享好东西性质的图片。\n\n## 输出\n- 不适合：只回复 SKIP\n- 适合保留：用 60 字以内锐评，先概括图里有什么，再轻微吐槽或点评。语气接地气、有梗，不要造谣，不要提发送时间，不要输出 Markdown。"
+                    }
+                }
             }
         }
     },
@@ -672,6 +728,12 @@
                 "description": "多群分析交错间隔（秒）",
                 "default": 30,
                 "hint": "当同时启动多个群组的定时分析任务时，每个任务之间的延迟间隔（秒），建议根据实际的 LLM 服务速度填写，过短可能导致请求堆积，过长则分析效率降低。"
+            },
+            "max_concurrent_image_llm": {
+                "type": "int",
+                "description": "最大图片 LLM 请求并发数",
+                "default": 2,
+                "hint": "限制图片锐评视觉模型请求并发，避免触发限流或风控。"
             }
         }
     }

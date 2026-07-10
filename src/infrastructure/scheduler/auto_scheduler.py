@@ -6,6 +6,7 @@
 import asyncio
 import time as time_mod
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
 
@@ -183,7 +184,9 @@ class AutoScheduler:
                 t_str = str(t_str).replace("：", ":").strip()
                 hour, minute = t_str.split(":")
 
-                trigger = CronTrigger(hour=int(hour), minute=int(minute))
+                trigger = CronTrigger(
+                    hour=int(hour), minute=int(minute), timezone=ZoneInfo("Asia/Shanghai")
+                )
                 job_id = f"astrbot_plugin_qq_group_daily_analysis_trigger_{i}"
 
                 scheduler.add_job(
@@ -194,7 +197,12 @@ class AutoScheduler:
                     misfire_grace_time=60,
                 )
                 self.scheduler_job_ids.append(job_id)
-                logger.info(f"已注册定时报告任务: {t_str} (Job ID: {job_id})")
+                job = scheduler.get_job(job_id)
+                next_run = getattr(job, "next_run_time", None)
+                logger.info(
+                    f"已注册定时报告任务: {t_str} Asia/Shanghai "
+                    f"(Job ID: {job_id}, next_run={next_run})"
+                )
 
             except Exception as e:
                 logger.error(f"注册定时任务失败 ({t_str}): {e}")
@@ -224,7 +232,9 @@ class AutoScheduler:
         # 注册增量分析任务
         for hour, minute in trigger_times:
             try:
-                trigger = CronTrigger(hour=hour, minute=minute)
+                trigger = CronTrigger(
+                    hour=hour, minute=minute, timezone=ZoneInfo("Asia/Shanghai")
+                )
                 job_id = f"incremental_analysis_{hour:02d}{minute:02d}"
 
                 scheduler.add_job(

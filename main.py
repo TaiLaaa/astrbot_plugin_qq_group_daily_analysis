@@ -44,6 +44,8 @@ from .src.infrastructure.platform.template_preview import (
     TemplatePreviewRouter,
 )
 from .src.infrastructure.reporting.generators import ReportGenerator
+from .src.infrastructure.reporting.local_renderer import make_render_func
+from .src.infrastructure.reporting.local_renderer import shutdown as renderer_shutdown
 from .src.infrastructure.scheduler.auto_scheduler import AutoScheduler
 from .src.shared.trace_context import TraceContext, TraceLogFilter
 from .src.utils.logger import logger
@@ -144,12 +146,14 @@ class GroupDailyAnalysis(Star):
 
         # 调度与发送
         self.message_sender = MessageSender(self.bot_manager, self.config_manager)
+        # 优先使用本机 Playwright 渲染；本机没有时自动回退到框架远程 T2I 服务
+        self._render_func = make_render_func(self.html_render)
         self.auto_scheduler = AutoScheduler(
             self.config_manager,
             self.analysis_service,
             self.bot_manager,
             self.report_generator,
-            self.html_render,
+            self._render_func,
             plugin_instance=self,
         )
 
@@ -183,13 +187,16 @@ class GroupDailyAnalysis(Star):
     async def _run_initialization(self, source: str):
         """统一初始化逻辑"""
         async with self._init_lock:
-            # 如果已经成功发现过平台，且不是来自 Platform Loaded 的强制触发，则跳过
-            if (
+            # 记录是否已经完成过初始化（含平台发现）
+            already_initialized = (
                 self._initialized
                 and self.bot_manager
                 and self.bot_manager.get_platform_count() > 0
-                and source != "Platform Loaded"
-            ):
+            )
+
+            # 非 Platform Loaded 来源：若已初始化则直接跳过整个流程
+            # Platform Loaded 来源：允许重新发现 bot，但不重复注册定时任务
+            if already_initialized and source != "Platform Loaded":
                 return
 
             # 稍微延迟，确保 context 和环境稳定
@@ -226,8 +233,10 @@ class GroupDailyAnalysis(Star):
                         self.context
                     )
 
-                # 3. 强制注册定时分析任务
-                if self.auto_scheduler:
+                # 3. 注册定时分析任务
+                # [修复] 仅在首次初始化时注册，避免 Platform Loaded 重入导致 schedule_jobs
+                # 被调用两次，进而使同一定时任务在 APScheduler 里触发两次，发送重复报告。
+                if self.auto_scheduler and not already_initialized:
                     self.auto_scheduler.schedule_jobs(self.context)
 
                 self._initialized = True
@@ -270,6 +279,9 @@ class GroupDailyAnalysis(Star):
 
             if self.report_generator:
                 await self.report_generator.close()
+
+            # 关闭本地 Playwright 浏览器进程（若未使用本地渲染则为空操作）
+            await renderer_shutdown()
 
             # 3. [关键修复] 只有在任务全部清理后，才清理引用。
             # 实际上，在 terminate 结束后，self 本身就会被 GC 释放，
@@ -602,7 +614,7 @@ class GroupDailyAnalysis(Star):
             image_url, html_content = await self.report_generator.generate_image_report(
                 analysis_result,
                 group_id,
-                self.html_render,
+                self._render_func,
                 avatar_url_getter=avatar_url_getter,
                 nickname_getter=nickname_getter,
                 avatar_cache_namespace=platform_id,

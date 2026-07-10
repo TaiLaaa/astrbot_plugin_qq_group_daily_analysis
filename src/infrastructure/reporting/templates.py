@@ -7,7 +7,7 @@ import asyncio
 import os
 import threading
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound, select_autoescape
 
 from ...utils.logger import logger
 
@@ -103,7 +103,22 @@ class HTMLTemplates:
         """
         try:
             env = self._get_env()
-            template = env.get_template(template_name)
+            try:
+                template = env.get_template(template_name)
+            except TemplateNotFound:
+                # 当前模板目录缺少此组件文件（如非 scrapbook 模板未包含 image_summary_item.html）
+                # 自动回退到 scrapbook 作为兜底，避免整个区块静默消失
+                fallback_dir = os.path.join(self.base_dir, "scrapbook")
+                logger.debug(
+                    f"模板组件 {template_name} 在当前模板中不存在，回退到 scrapbook"
+                )
+                fallback_env = Environment(
+                    loader=FileSystemLoader(fallback_dir),
+                    autoescape=select_autoescape(["html", "xml"]),
+                    trim_blocks=True,
+                    lstrip_blocks=True,
+                )
+                template = fallback_env.get_template(template_name)
             return template.render(**kwargs)
         except Exception as e:
             logger.error(f"渲染模板 {template_name} 失败: {e}")
