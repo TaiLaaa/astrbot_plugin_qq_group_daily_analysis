@@ -8,6 +8,7 @@ from collections.abc import Sized
 from typing import Generic, TypeVar
 
 from ....domain.models.data_models import TokenUsage
+from ....shared.constants import PLUGIN_NAME
 from ....utils.logger import logger
 from ..utils.json_utils import parse_json_response
 from ..utils.llm_utils import (
@@ -157,20 +158,23 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
         self,
         provider_id_key: str | None,
         umo: str | None,
+        provider_id: str | None = None,
     ) -> float | None:
         """
         尝试从当前将要调用的 Provider 配置中解析基础 temperature。
         """
-        provider_id = await get_provider_id_with_fallback(
-            self.context,
-            self.config_manager,
-            provider_id_key,
-            umo,
-        )
-        if not provider_id:
+        pid = provider_id
+        if not pid:
+            pid = await get_provider_id_with_fallback(
+                self.context,
+                self.config_manager,
+                provider_id_key,
+                umo,
+            )
+        if not pid:
             return None
 
-        provider = self.context.get_provider_by_id(provider_id=provider_id)
+        provider = self.context.get_provider_by_id(provider_id=pid)
         if provider is None:
             return None
 
@@ -280,20 +284,9 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
             session_id: 会话ID
         """
         try:
-            from pathlib import Path
-
             from astrbot.api.star import StarTools
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-            try:
-                data_path = StarTools.get_data_dir() / "debug_data"
-            except Exception:
-                data_path = (
-                    Path(get_astrbot_data_path())
-                    / "plugin_data"
-                    / "astrbot_plugin_qq_group_daily_analysis"
-                    / "debug_data"
-                )
+            data_path = StarTools.get_data_dir(PLUGIN_NAME) / "debug_data"
 
             data_path.mkdir(parents=True, exist_ok=True)
 
@@ -387,8 +380,16 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
 
             # 2. 调用LLM（使用配置的 provider）
             provider_id_key = self.get_provider_id_key()
+
+            # Resolve provider ID once; pass downstream to avoid duplicate resolve logs
+            resolved_provider_id = None
+            if provider_id_key:
+                resolved_provider_id = await get_provider_id_with_fallback(
+                    self.context, self.config_manager, provider_id_key, umo
+                )
+
             base_temperature = await self._resolve_provider_temperature(
-                provider_id_key, umo
+                provider_id_key, umo, provider_id=resolved_provider_id
             )
 
             # 获取人格设定
@@ -411,6 +412,7 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
                 prompt=prompt,
                 umo=umo,
                 provider_id_key=provider_id_key,
+                provider_id=resolved_provider_id,
                 system_prompt=system_prompt,
                 response_format=self.get_response_format(),
             )

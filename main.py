@@ -47,6 +47,7 @@ from .src.infrastructure.reporting.generators import ReportGenerator
 from .src.infrastructure.reporting.local_renderer import make_render_func
 from .src.infrastructure.reporting.local_renderer import shutdown as renderer_shutdown
 from .src.infrastructure.scheduler.auto_scheduler import AutoScheduler
+from .src.shared.constants import PLUGIN_NAME
 from .src.shared.trace_context import TraceContext, TraceLogFilter
 from .src.utils.logger import logger
 from .src.utils.resilience import GlobalRateLimiter
@@ -79,10 +80,6 @@ class GroupDailyAnalysis(Star):
         super().__init__(context)
         self.config = config
 
-        from pathlib import Path
-
-        from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-
         # 1. 基础设施层
         self.config_manager = ConfigManager(config)
         self.bot_manager = BotManager(self.config_manager)
@@ -90,15 +87,7 @@ class GroupDailyAnalysis(Star):
         self.bot_manager.set_plugin_instance(self)
         self.history_manager = HistoryManager(self)
 
-        try:
-            plugin_data_dir = StarTools.get_data_dir()
-        except Exception:
-            # 回退逻辑：手动构造满足规范的路径
-            plugin_data_dir = (
-                Path(get_astrbot_data_path())
-                / "plugin_data"
-                / "astrbot_plugin_qq_group_daily_analysis"
-            )
+        plugin_data_dir = StarTools.get_data_dir(PLUGIN_NAME)
 
         self.report_generator = ReportGenerator(self.config_manager, plugin_data_dir)
 
@@ -558,6 +547,10 @@ class GroupDailyAnalysis(Star):
                 reason = result.get("reason")
                 if reason == "no_messages":
                     yield event.plain_result("❌ 未找到足够的群聊记录")
+                elif reason == "muted":
+                    logger.warning(
+                        f"群 {group_id} 开启了全群禁言或对 Bot 禁言，跳过回复以防抛出发送异常"
+                    )
                 else:
                     yield event.plain_result("❌ 分析失败，原因未知")
                 return
@@ -652,23 +645,12 @@ class GroupDailyAnalysis(Star):
 
                         # 若用户配置为空，使用默认目录
                         if not html_output_dir:
-                            try:
-                                from astrbot.api.star import StarTools
+                            from astrbot.api.star import StarTools
 
-                                html_output_dir = os.path.join(
-                                    StarTools.get_data_dir(), "self_hosted_html_reports"
-                                )
-                            except Exception:
-                                from astrbot.core.utils.astrbot_path import (
-                                    get_astrbot_data_path,
-                                )
-
-                                html_output_dir = os.path.join(
-                                    get_astrbot_data_path(),
-                                    "plugin_data",
-                                    "astrbot_plugin_qq_group_daily_analysis",
-                                    "self_hosted_html_reports",
-                                )
+                            html_output_dir = os.path.join(
+                                StarTools.get_data_dir(PLUGIN_NAME),
+                                "self_hosted_html_reports",
+                            )
 
                         # 计算相对路径并转换为URL
                         rel_path = os.path.relpath(html_path, html_output_dir)
